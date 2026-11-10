@@ -1,1 +1,2 @@
 - v0.1.0：polyrepo-sdk 的 feat 變更
+- v0.3.0：polyrepo-sdk 的 feat 變更
