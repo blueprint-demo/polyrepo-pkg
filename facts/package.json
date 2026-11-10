@@ -1,0 +1,36 @@
+{
+  "name": "polyrepo-pkg-facts",
+  "version": "0.0.0",
+  "description": "Facts for polyrepo-pkg: one component per unit",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blueprint-demo/polyrepo-pkg.git",
+    "directory": "facts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "fact-kit build",
+    "check": "fact-kit check"
+  },
+  "devDependencies": {
+    "polyrepo-sdk-facts": "workspace:*",
+    "polyrepo-sdk-py-facts": "workspace:*",
+    "polyrepo-shared-facts": "workspace:*",
+    "fact-kit": "^0.14.1",
+    "oxc-parser": "^0.155.0"
+  },
+  "exports": {
+    "./polyrepo-sdk/index.json": "./dist/polyrepo-sdk/index.json",
+    "./polyrepo-sdk/schemas/*": "./dist/polyrepo-sdk/schemas/*",
+    "./polyrepo-sdk-py/index.json": "./dist/polyrepo-sdk-py/index.json",
+    "./polyrepo-sdk-py/schemas/*": "./dist/polyrepo-sdk-py/schemas/*",
+    "./polyrepo-shared/index.json": "./dist/polyrepo-shared/index.json",
+    "./polyrepo-shared/schemas/*": "./dist/polyrepo-shared/schemas/*"
+  }
+}
