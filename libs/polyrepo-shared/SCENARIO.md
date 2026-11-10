@@ -1,1 +1,2 @@
 - v0.1.0：polyrepo-shared 的 feat 變更
+- v0.2.0：polyrepo-shared 的 fix 變更
