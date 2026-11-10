@@ -1,0 +1,9 @@
+[
+  {
+    "unit": "polyrepo-sdk-py",
+    "dir": "packages/polyrepo-sdk-py",
+    "lang": "python",
+    "build": "python -m pip install build && python -m build packages/polyrepo-sdk-py",
+    "test": "python -m pip install -e \"packages/polyrepo-sdk-py[test]\" && python -m pytest packages/polyrepo-sdk-py"
+  }
+]
