@@ -1,6 +1,6 @@
 {
   "name": "@blueprint-demo/polyrepo-shared",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Shared TypeScript library of polyrepo-pkg",
   "type": "module",
   "main": "./dist/index.js",
