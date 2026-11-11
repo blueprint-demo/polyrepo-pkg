@@ -1,6 +1,6 @@
 {
   "packages/polyrepo-sdk-py": "0.1.0",
-  "libs/polyrepo-shared": "0.1.1",
+  "libs/polyrepo-shared": "0.1.2",
   "facts": "0.1.0",
-  "packages/polyrepo-sdk": "0.1.0"
+  "packages/polyrepo-sdk": "0.2.0-beta.1"
 }
