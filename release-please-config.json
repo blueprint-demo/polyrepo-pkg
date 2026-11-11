@@ -1,0 +1,56 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "$comment": "Single config for every unit. Versioning happens only on release/v* branches: cut-release.sh copies this file onto the branch filtered to the train's units and gives each unit the versioning and prerelease-type its stage in release-policy.json calls for; finalize-release.sh --phase ga takes the units out of prerelease mode. main never carries version commits.",
+  "include-component-in-tag": true,
+  "include-v-in-tag": true,
+  "tag-separator": "/",
+  "separate-pull-requests": false,
+  "bump-minor-pre-major": true,
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Added"
+    },
+    {
+      "type": "fix",
+      "section": "Fixed"
+    },
+    {
+      "type": "perf",
+      "section": "Changed"
+    },
+    {
+      "type": "deps",
+      "section": "Changed"
+    },
+    {
+      "type": "revert",
+      "section": "Changed"
+    }
+  ],
+  "plugins": [
+    {
+      "type": "node-workspace"
+    }
+  ],
+  "packages": {
+    "packages/polyrepo-sdk": {
+      "component": "polyrepo-sdk",
+      "release-type": "node"
+    },
+    "packages/polyrepo-sdk-py": {
+      "component": "polyrepo-sdk-py",
+      "release-type": "python"
+    },
+    "libs/polyrepo-shared": {
+      "component": "polyrepo-shared",
+      "release-type": "node"
+    },
+    "facts": {
+      "component": "polyrepo-pkg-facts",
+      "release-type": "node",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0"
+    }
+  }
+}
