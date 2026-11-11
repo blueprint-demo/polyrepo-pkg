@@ -1,0 +1,88 @@
+name: advance-release
+
+# 推進階段：手動觸發，輸入發布線與目標階段，在發布分支上跑 advance-release.sh。目標是 ga 時，腳本自己轉給
+# finalize-release.sh --phase ga，這裡不另外處理。
+# 從 main 派送。發布分支 checkout 在工作區根目錄，main 的 checkout 放在子目錄 .main-tools，用 main 的腳本對根目錄執行，
+# 所以不用 setup-workspace 的 restore-from-default：它會把 main 的檔放進暫存區，發布腳本一開始檢查工作區乾不乾淨就會中止。
+# 子目錄寫進 .git/info/exclude，工作區看起來仍是乾淨的。
+# 推送要讓發布分支上的 workflow 接著跑，所以用 GitHub App 的權杖，GITHUB_TOKEN 推的分支不觸發它。
+# 條件還沒成立（CI 閘還沒過、起點閘或部署閘不符）時，腳本直接失敗並印出要等什麼，不在 job 裡等。等條件成立後再觸發一次。
+# 誰可以觸發由倉層變數 RELEASE_TRIGGER_ACTORS 列出（逗號分隔的帳號），沒設時不限制。比對的是 github.triggering_actor。
+# 觸發者檢查排在取 App 權杖與 checkout 之後，沒有移到取權杖之前（評估過）：檢查用的腳本在 main 的 checkout（.main-tools）裡，
+# 而 actions/checkout 遇到沒有 .git 但已有內容的目錄會先清空它，所以發布分支要先 checkout 在根目錄，main 才能放進子目錄。
+# 名單外的人觸發時權杖已經取得，但還沒有任何寫入，檢查失敗 job 就結束。sync-release-tools.yml 與 close-release.yml 的 checkout 在根目錄、
+# 不受這限制，檢查在取權杖之前。
+
+on:
+  workflow_dispatch:
+    inputs:
+      line:
+        description: "the release line, X.Y"
+        required: true
+        type: string
+      to:
+        description: "target stage: beta, rc or ga. Empty: the next stage the units of the line walk"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# one group per release line, shared with merge-release-pr.yml, so the two never write to the same line at once
+concurrency:
+  group: release-line-${{ inputs.line }}
+  cancel-in-progress: false
+
+env:
+  # a loop of a template script asks twice at most and the CI gate asks twice (decision self-hosted-job-no-wait)
+  POLL_TRIES: "2"
+  CI_GATE_TRIES: "2"
+  CI_GATE_QUEUE_TRIES: "0"
+
+jobs:
+  advance:
+    # the workflow of another branch would run with the key of the App
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+      - name: Release branch at the root
+        uses: actions/checkout@v7
+        with:
+          ref: release/v${{ inputs.line }}
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Scripts of the default branch in a subdirectory
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .main-tools
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Keep the subdirectory out of the work tree
+        run: echo "/.main-tools/" >> .git/info/exclude
+      - name: Only the listed accounts may run this
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          ALLOWED_ACTORS: ${{ vars.RELEASE_TRIGGER_ACTORS }}
+        run: bash .main-tools/scripts/release/check-trigger-actor.sh
+      - uses: ./.github/actions/setup-workspace
+      - name: Advance the stage
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LINE: ${{ inputs.line }}
+          TO: ${{ inputs.to }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash .main-tools/scripts/release/advance-release.sh --line "$LINE" ${TO:+--to "$TO"} --yes
