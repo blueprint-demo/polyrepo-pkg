@@ -1,0 +1,38 @@
+{
+  "$schema": "./schemas/release-policy.schema.json",
+  "product": {
+    "name": "polyrepo",
+    "primary": "blueprint-demo/polyrepo-hub"
+  },
+  "access": "public",
+  "scope": "@blueprint-demo",
+  "units": {
+    "polyrepo-sdk": {
+      "kind": "sdk",
+      "stages": [
+        "beta",
+        "ga"
+      ]
+    },
+    "polyrepo-sdk-py": {
+      "kind": "sdk",
+      "stages": [
+        "beta",
+        "ga"
+      ]
+    },
+    "polyrepo-shared": {
+      "kind": "package",
+      "stages": [
+        "ga"
+      ],
+      "access": "restricted"
+    },
+    "polyrepo-pkg-facts": {
+      "kind": "package",
+      "stages": [
+        "ga"
+      ]
+    }
+  }
+}
