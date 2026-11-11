@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.2](https://github.com/blueprint-demo/polyrepo-pkg/compare/polyrepo-shared/v0.1.1...polyrepo-shared/v0.1.2) (2026-11-11)
+
+
+### Fixed
+
+* **polyrepo-shared:** 修正 v0.2.0 的一項問題 ([#102](https://github.com/blueprint-demo/polyrepo-pkg/issues/102)) ([97ba10f](https://github.com/blueprint-demo/polyrepo-pkg/commit/97ba10f72a4af02801a55b1bfeec1277df29b2e6))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * peerDependencies
+    * polyrepo-sdk bumped to 0.2.0-beta.1
+
 ## [0.1.1](https://github.com/blueprint-demo/polyrepo-pkg/compare/polyrepo-shared/v0.1.0...polyrepo-shared/v0.1.1) (2026-11-11)
 
 
