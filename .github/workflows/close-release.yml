@@ -1,0 +1,133 @@
+name: close-release
+
+# 收尾：合回 PR（release/vX.Y--to-main）的 ci 與 pr-message 兩支 workflow 完成時（workflow_run completed），看必要檢查是否都過了、
+# PR 的 head 還是被檢查的那個 commit，條件都成立就跑 finalize-release.sh --phase close：合併合回 PR、在發布分支的最後一個 commit 打
+# 產品 tag、刪掉發布分支與暫時分支。產品 tag 帶出 deploy-prod.yml 與 release-line-finalize.yml。
+# pr-message 也是必要檢查，可能比 ci 晚完成，所以兩支完成都會帶出這支。早完成的那一次還有檢查在跑，結論成功、不做事，晚完成的那一次才收尾。
+# 判斷是 scripts/release/close-ready.sh，用 auto-merge 同一套必要檢查（scripts/merge/decide.mjs 的 requiredCheckProblems）。
+# 條件沒成立時（檢查還在跑、head 變了、PR 已合併、不是合回 PR）不做事、結論成功，因為同一條線的事件發生很多次。PR 與 main 有衝突時
+# finalize-release.sh 不合併並失敗，訊息寫要重跑合回（merge-back），重跑會推出新的 head 並帶出新的檢查，檢查完成再帶出這支。
+# PR 編號與 head sha 只讀事件內容 github.event.workflow_run.pull_requests[0].number 與 github.event.workflow_run.head_sha：
+# github.sha 是 main 的 commit，不是 PR 的 head；PR 合併後用 run 編號回查 pull_requests 會讀到空陣列。
+# 收尾不放進 auto-merge.yml：它掛 pull_request_target，lint 的 pr-no-publish 規則不讓在 PR 上跑的 workflow 呼叫 finalize-release.sh。
+# 合併、打 tag、刪分支都用 GitHub App 的權杖：GITHUB_TOKEN 打的產品 tag 不觸發 deploy-prod.yml。權杖只在判斷通過之後才取。
+#
+# 另可手動觸發（後備，事件沒接到時補做）：輸入發布線，條件沒成立時失敗並印出原因。手動觸發需要 GitHub App，沒有 App 的倉跑它會在
+# create-github-app-token 失敗。事件觸發時沒有 App 的倉整個 job 略過、結論成功，照舊在本機跑 finalize-release.sh --phase close。
+# 手動觸發時先檢查觸發者（倉層變數 RELEASE_TRIGGER_ACTORS，逗號分隔的帳號，沒設時不限制，比對的是 github.triggering_actor），
+# 檢查在取 App 權杖之前。workflow_run 觸發時跑的一律是預設分支上的這個檔。
+
+on:
+  workflow_run:
+    workflows: [ci, pr-message]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      line:
+        description: "the release line, X.Y"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# the runs of one merge-back PR queue: a close is never cancelled halfway, and a run that waits reads the PR again when it starts
+concurrency:
+  group: close-release-${{ inputs.line || github.event.workflow_run.pull_requests[0].number }}
+  cancel-in-progress: false
+
+env:
+  # a loop of a template script asks twice at most and the CI gate asks twice (decision self-hosted-job-no-wait)
+  POLL_TRIES: "2"
+  CI_GATE_TRIES: "2"
+  CI_GATE_QUEUE_TRIES: "0"
+
+jobs:
+  close:
+    # An event that cannot lead to a close stays off the runner: a finished ci or pr-message that belongs to no pull request (a push,
+    # a fork), or whose branch is not release/vX.Y--to-main. The workflow of another branch would run with the key of the App.
+    if: >-
+      (github.event_name == 'workflow_dispatch'
+      && github.ref_name == github.event.repository.default_branch)
+      || (github.event_name == 'workflow_run'
+      && vars.RELEASE_PLEASE_APP_CLIENT_ID != ''
+      && github.event.workflow_run.pull_requests[0].number
+      && startsWith(github.event.workflow_run.head_branch, 'release/v')
+      && endsWith(github.event.workflow_run.head_branch, '--to-main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # the read of the checks and the PR; the writes are done with the token of the App
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      checks: read
+      statuses: read
+    steps:
+      - name: Default branch, read only
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Only the listed accounts may run this by hand
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          ALLOWED_ACTORS: ${{ vars.RELEASE_TRIGGER_ACTORS }}
+        run: bash scripts/release/check-trigger-actor.sh
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install: "false"
+      - id: ready
+        name: Can the merge-back PR be closed now
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          LINE: ${{ inputs.line }}
+        run: |
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            bash scripts/release/close-ready.sh --line "$LINE" --strict
+          else
+            bash scripts/release/close-ready.sh --pr "$PR_NUMBER" --head-sha "$HEAD_SHA"
+          fi >> "$GITHUB_OUTPUT"
+      - name: Summary
+        if: always()
+        env:
+          READY: ${{ steps.ready.outputs.ready }}
+          REASON: ${{ steps.ready.outputs.reason }}
+        run: |
+          {
+            echo "### close-release"
+            echo "- ready: \`${READY:-unknown}\`"
+            echo "- ${REASON:-the decision did not finish}"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - id: app-token
+        if: steps.ready.outputs.ready == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+      # the whole history and the tags: close reads origin/main and the release branch; the token stays in the checkout for the pushes
+      - name: Default branch with the history, pushing as the App
+        if: steps.ready.outputs.ready == 'true'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Merge the merge-back PR, tag the product version, delete the branches
+        if: steps.ready.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LINE: ${{ steps.ready.outputs.line }}
+          HEAD_SHA: ${{ steps.ready.outputs.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash scripts/release/finalize-release.sh --line "$LINE" --phase close --head-sha "$HEAD_SHA" --yes
