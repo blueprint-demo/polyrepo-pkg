@@ -1,0 +1,232 @@
+name: release-please
+
+# The versioning engine for every unit, and it runs only on release trains: main never carries a
+# version commit (docs/versioning.md). cut-release.sh scopes release-please-config.json to the
+# train's units and puts it in prerelease mode; finalize-release.sh --phase ga takes it back out.
+#
+# Tags created with GITHUB_TOKEN raise no events, so without a GitHub App this workflow has to
+# dispatch the prerelease deploy itself and reconcile what a failed run missed. Set the repository
+# variable RELEASE_PLEASE_APP_CLIENT_ID (and the RELEASE_PLEASE_APP_PRIVATE_KEY secret) and the
+# release runs as the App instead: its tags fire deploy-prerelease's own `push: tags` trigger, and both
+# the dispatch step and the ensure-stage-deploys job switch themselves off. Everything works either way.
+#
+# With the App the workflow also does the two steps that follow release-please, each only when its condition holds and otherwise
+# succeeding without doing anything, because the same push comes many times and most of them are not the time:
+#   - pin: this run wrote or updated the Release PR (prs_created, or a re-run of the job, which finds nothing to update after a
+#     pin that failed half way) and created no tag → scripts/release/pin-release-pr.sh pins the "next" of facts and docs to the
+#     versions of the Release PR and pushes. The push makes release-please run again; the second run has nothing to change.
+#   - merge-back: the line is at ga and every final tag exists → the next job runs finalize-release.sh --phase merge-back.
+# The pushes use the token of the App, because a push made with GITHUB_TOKEN raises no workflow run and the merge-back PR would get
+# no checks. The fallbacks by hand are the merge-release-pr and merge-back workflows. This file has no manual trigger.
+# Two other workflows are started by events and work on the same lines: sync-release-tools.yml (main changes the tooling, the open
+# lines follow, so this file and the scripts it calls on a branch are main's) and close-release.yml (the checks of the merge-back
+# PR finish, the PR is merged, the product tag is made and the branches are deleted).
+
+on:
+  push:
+    branches:
+      - "release/**"
+      # 合回用的中介分支不是發布分支，不該再跑一次 release-please。
+      # 同一份清單內用 "!" 排除；branches 與 branches-ignore 不能並用。
+      - "!release/**--to-main"
+    # 只有動到發布單元或它自己的設定才需要重算版號。發布分支上還會落下取回工具、
+    # 補設定這類 chore commit，它們不可能改變任何版號，卻各觸發一次平均 130 秒的
+    # 執行（本輪 29 次中約四分之一屬此類）。paths 與 branches 是且的關係。
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "libs/**"
+      - "facts/**"
+      - "services/**"
+      - "infra/**"
+      - "ops/**"
+      - "docs/**"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
+  # no workflow_dispatch: run by hand on main it would open a version PR against main, breaking
+  # the "main never carries a version commit" invariant
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # a loop of a template script asks twice at most and the CI gate asks twice (decision self-hosted-job-no-wait)
+  POLL_TRIES: "2"
+  CI_GATE_TRIES: "2"
+  CI_GATE_QUEUE_TRIES: "0"
+
+jobs:
+  release-please:
+    # finalize-release.sh --phase merge-back 的產品 commit（chore(<發布分支>): product vX.Y.Z）刪掉 .release-marker，
+    # 碰到單元路徑而觸發這裡，但它不帶 Release-As，沒有版號要算。合回 PR 一合併，發布分支就被刪掉，排隊較久的
+    # run 開跑時讀不到分支上的 manifest 而失敗，所以這次推送直接跳過。
+    if: "!startsWith(github.event.head_commit.message, format('chore({0}): product v', github.ref_name))"
+    runs-on: ubuntu-latest
+    # release-please takes about 130 s; a run that pins adds setup-workspace (Node, pnpm install) and the fact-kit and
+    # clarify-kit pin on top, so the limit is the one of the manual merge workflow, which does the same work
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    outputs:
+      branch_exists: ${{ steps.branch.outputs.exists }}
+      merge_back_ready: ${{ steps.ready.outputs.ready }}
+    steps:
+      # Only when the App is configured; otherwise the step is skipped and its empty output falls
+      # through to GITHUB_TOKEN below. The App needs Contents, Pull requests, Issues and Workflows (write):
+      # release-please labels its PRs, and PR labels go through the Issues API. Workflows is for sync-release-tools.yml,
+      # whose push to a release branch changes .github/workflows; a push of that path is refused without it.
+      # It comes before the checkout so that the checkout keeps the App token for the push of the pin step.
+      - id: app-token
+        if: vars.RELEASE_PLEASE_APP_CLIENT_ID != ''
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7
+        with:
+          # train_stage reads the Release-Train-Stage trailer from history; a shallow checkout would not find it
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token || github.token }}
+
+      # 這次 run 排隊期間，發布分支可能已被收尾刪掉（push 的 commit 不是產品 commit，上面的 if 擋不到）。
+      # 分支不在就讓下面所有步驟略過，run 不失敗；讀不到 origin 則照樣失敗。這一步用 checkout 留下的 token 讀 origin。
+      - id: branch
+        name: Release branch still on origin
+        run: bash scripts/ci/branch-exists.sh >> "$GITHUB_OUTPUT"
+
+      - id: rp
+        if: steps.branch.outputs.exists == 'true'
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token || secrets.GITHUB_TOKEN }}
+          target-branch: ${{ github.ref_name }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      - name: Summary
+        if: steps.branch.outputs.exists == 'true'
+        run: |
+          {
+            echo "### release-please on \`${GITHUB_REF_NAME}\`"
+            echo "- releases_created: ${{ steps.rp.outputs.releases_created }}"
+            echo "- prs_created: ${{ steps.rp.outputs.prs_created }}"
+            echo "- paths_released: ${{ steps.rp.outputs.paths_released }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # apps/* 與 services/* 的 prerelease → 依階段部署到對應環境（deploy-prerelease.yml，階段與環境對應見 scripts/lib/release-stages.sh）。infra/* 只發布介面，不部署，雲端資源由 ops 的 iac 步驟建立。正式版不在此 dispatch：prod 由產品 tag 統一觸發。
+      # 有 App token 時 tag 自己會觸發 deploy-prerelease，這一步就不需要，跑了還會變成部署兩次。
+      - name: Dispatch prerelease deploy for released apps and services (無 App token 時才需要)
+        if: steps.branch.outputs.exists == 'true' && steps.rp.outputs.releases_created == 'true' && vars.RELEASE_PLEASE_APP_CLIENT_ID == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PATHS: ${{ steps.rp.outputs.paths_released }}
+          OUTPUTS: ${{ toJSON(steps.rp.outputs) }}
+        run: |
+          for p in $(echo "$PATHS" | jq -r '.[] | select(startswith("apps/") or startswith("services/"))'); do
+            tag=$(echo "$OUTPUTS" | jq -r --arg k "${p}--tag_name" '.[$k] // empty')
+            if [[ -z "$tag" ]]; then echo "no tag_name output for $p, skipping"; continue; fi
+            if [[ "$tag" != *-* ]]; then echo "$tag 為正式版，prod 由產品 tag 統一觸發，略過"; continue; fi
+            echo "dispatch deploy-prerelease.yml for $tag"
+            gh workflow run deploy-prerelease.yml --ref "$tag" -f tag="$tag"
+          done
+
+      # packages/*、libs/*、facts 與 docs 匯總套件 → 每個階段都發布（publish.yml）。哪些路徑真的是要發布的單元，
+      # 由 publish.yml 的 plan job 判斷（libs/* 有的不發布）。alpha、beta、rc 掛在階段名的 npm dist-tag，GA 才進
+      # latest，所以使用者要明確指定才會裝到預發布版。同一條發布線的單元可以停在不同階段（docs/versioning.md），
+      # 所以 dispatch-publish.sh 依每個單元自己的版號算階段，每個階段各派送一次 publish.yml，publish.yml 再逐單元核對
+      # 版號屬於這個階段。tag 不會觸發發布，有沒有 App token 都由這裡派送。
+      - name: Dispatch publish for released packages
+        if: steps.branch.outputs.exists == 'true' && steps.rp.outputs.releases_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PATHS: ${{ steps.rp.outputs.paths_released }}
+        run: bash scripts/release/dispatch-publish.sh
+
+      # 釘版：這次 run 建立或更新了 Release PR（prs_created 在建立與只更新時都是 'true'，沒有變動時是 'false'），而且沒有建 tag。
+      # 釘版中途失敗後重跑同一個 job 時，release-please 沒有東西可更新，prs_created 是 'false'，所以 run_attempt 大於 1
+      # 也做。其餘的 run 不裝相依套件。沒有 App 時略過，由合 Release PR 的 workflow 或本機的 merge-release-pr.sh 釘。
+      # 條件沒成立的情形（沒有開著的 Release PR、分支在 release-please 之後又前進、版號不符）由腳本判斷，結論都是成功。
+      - id: pin-conditions
+        if: steps.branch.outputs.exists == 'true' && vars.RELEASE_PLEASE_APP_CLIENT_ID != '' && steps.rp.outputs.releases_created != 'true' && (steps.rp.outputs.prs_created == 'true' || github.run_attempt > 1)
+        run: echo "run=true" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-workspace
+        if: steps.pin-conditions.outputs.run == 'true'
+      - name: Pin next to the versions of the Release PR
+        if: steps.pin-conditions.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash scripts/release/pin-release-pr.sh --line "${BRANCH#release/v}" --yes
+
+      # 合回：階段是 ga 而且這條線要的最終 tag 都齊了才輸出 true，下一個 job 以它為條件。tag 是上面 release-please 這次 run 才建的，
+      # 所以腳本先取回 tag。沒有單元升版的線也算齊，但它可能沒有這個事件，那條線靠手動的 merge-back workflow 補。
+      - id: ready
+        if: steps.branch.outputs.exists == 'true' && vars.RELEASE_PLEASE_APP_CLIENT_ID != ''
+        run: bash scripts/release/merge-back-ready.sh >> "$GITHUB_OUTPUT"
+
+  # GA 之後開合回 PR：上一個 job 算出階段是 ga 且最終 tag 都齊了才啟動，條件沒成立時這個 job 不啟動，不佔 runner。
+  # 推送與開 PR 用 App 的權杖，不然合回 PR 的檢查不會跑。需要 App，所以沒有 App 的倉略過。
+  merge-back:
+    needs: release-please
+    if: needs.release-please.outputs.merge_back_ready == 'true' && vars.RELEASE_PLEASE_APP_CLIENT_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: ./.github/actions/setup-workspace
+      - name: Open the merge-back PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash scripts/release/finalize-release.sh --line "${BRANCH#release/v}" --phase merge-back --yes
+
+  # 只在沒有 App token 的退路上需要。派送與發版在同一個 run，release 與 tag 建好之後 run 若因暫時性錯誤
+  # 失敗（實測 2026-09-09：GitHub GraphQL 回 "Something went wrong"），上面的派送步驟被略過，而
+  # GITHUB_TOKEN 建的 tag 不觸發 push 事件，預發布部署就永遠不會發生。此 job 在每次 run 之後（含失敗）依
+  # manifest 補派送缺漏的 prerelease 部署；可重複執行。有 App token 時 tag 事件本身就是那個保證。
+  # 發布分支已被刪掉時（branch_exists 為 false），沒有分支可補，這個 job 也略過。
+  ensure-stage-deploys:
+    needs: release-please
+    if: always() && needs.release-please.result != 'skipped' && needs.release-please.outputs.branch_exists != 'false' && vars.RELEASE_PLEASE_APP_CLIENT_ID == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-workspace
+        with:
+          node: "false"
+      - name: 補派送遺漏的預發布部署
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release/ensure-stage-deploys.sh
