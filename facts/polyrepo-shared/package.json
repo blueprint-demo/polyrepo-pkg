@@ -1,0 +1,17 @@
+{
+  "name": "polyrepo-shared-facts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Facts about polyrepo-shared. Private workspace package, published through polyrepo-pkg-facts.",
+  "type": "module",
+  "scripts": {
+    "build": "fact-kit build",
+    "check": "fact-kit check"
+  },
+  "devDependencies": {
+    "fact-kit": "^0.14.1"
+  },
+  "exports": {
+    "./polyrepo-shared/index.json": "./dist/polyrepo-shared/index.json"
+  }
+}
