@@ -1,0 +1,15 @@
+packages:
+  - "libs/*"
+  - "packages/*"
+  - "facts"
+  - "facts/*"
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - "@blueprint-demo/*"
+  - "*-facts"
+  - fact-kit
+  - clarify-kit
+  - blueprint-shared-facts
+  - blueprint-shared-docs
+  - blueprint-shared-templates
+  - blueprint-shared-*
