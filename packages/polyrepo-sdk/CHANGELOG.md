@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0-beta.1](https://github.com/blueprint-demo/polyrepo-pkg/compare/polyrepo-sdk/v0.1.0...polyrepo-sdk/v0.2.0-beta.1) (2026-11-16)
+
+
+### Added
+
+* **polyrepo-sdk:** 為 v0.3.0 補一項變更 ([#254](https://github.com/blueprint-demo/polyrepo-pkg/issues/254)) ([05409f1](https://github.com/blueprint-demo/polyrepo-pkg/commit/05409f1333a31421f02ac9a2ca0a67254dfdc73e))
+
 ## [0.1.0](https://github.com/blueprint-demo/polyrepo-pkg/compare/polyrepo-sdk/v0.1.0-beta.1...polyrepo-sdk/v0.1.0) (2026-11-16)
 
 
