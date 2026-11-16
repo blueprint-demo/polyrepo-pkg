@@ -1,0 +1,5 @@
+{
+  "implDirs": [
+    "../../packages/polyrepo-sdk"
+  ]
+}

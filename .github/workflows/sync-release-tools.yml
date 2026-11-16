@@ -1,0 +1,91 @@
+name: sync-release-tools
+
+# 同步發布工具：main 上的 scripts/、.github/workflows/、.github/actions/ 有推送時，把開著的發布線上落後 main 的那幾個路徑
+# 還原成 main 的版本，commit 後推到發布分支。發布期間 main 改了 workflow 或腳本是常態，發布分支不同步的話，推進階段前的
+# 工具閘（advance-release.sh）會擋下來。邏輯在 scripts/release/sync-release-tools.sh，說明與略過的條件寫在那裡：
+# 發布線已推了產品 commit 或合回 PR 開著時略過（產品 tag 打在發布分支的最後一個 commit，多一個同步 commit 會被一起發布），
+# 發布線自己改過這些路徑時失敗並印出那些 commit，推送被拒時取回最新的分支再試一次。
+# release-please.yml 讀的是發布分支上的檔，已開著的發布線要靠這支把 scripts/release/ 的新腳本帶過去，釘版與合回的步驟才找得到。
+#
+# 另可手動觸發（後備，事件沒接到時補做）：輸入發布線，沒填就處理全部開著的線。手動觸發需要 GitHub App，沒有 App 的倉跑它會在
+# create-github-app-token 失敗。事件觸發時沒有 App 的倉整個 job 略過、結論成功，照舊在本機跑 scripts/release/sync-release-tools.sh。
+# 推送用 GitHub App 的權杖：GITHUB_TOKEN 推的分支不觸發 ci，推進階段的 CI 閘就等不到那個 commit 的 ci；
+# 而且推 .github/workflows 的變更要 App 有 Workflows 的寫入權限（Contents、Pull requests、Issues、Workflows）。
+# 手動觸發時先檢查觸發者（倉層變數 RELEASE_TRIGGER_ACTORS，逗號分隔的帳號，沒設時不限制，比對的是 github.triggering_actor），
+# 檢查在取 App 權杖之前，用的是 main 的 checkout，所以名單外的人觸發時權杖不會被取出。
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/**"
+      - ".github/workflows/**"
+      - ".github/actions/**"
+  workflow_dispatch:
+    inputs:
+      line:
+        description: "the release line, X.Y. Empty: every open release line"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# one run at a time: two syncs would push to the same branches. A run that waits is not cancelled, and it reads main again when it starts
+concurrency:
+  group: release-tool-sync
+  cancel-in-progress: false
+
+env:
+  # a loop of a template script asks twice at most and the CI gate asks twice (decision self-hosted-job-no-wait)
+  POLL_TRIES: "2"
+  CI_GATE_TRIES: "2"
+  CI_GATE_QUEUE_TRIES: "0"
+
+jobs:
+  sync:
+    # the workflow of another branch would run with the key of the App; without the App an event does nothing, a manual run fails at the token
+    if: github.ref_name == github.event.repository.default_branch && (github.event_name == 'workflow_dispatch' || vars.RELEASE_PLEASE_APP_CLIENT_ID != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Default branch, read only
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Only the listed accounts may run this by hand
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          ALLOWED_ACTORS: ${{ vars.RELEASE_TRIGGER_ACTORS }}
+        run: bash scripts/release/check-trigger-actor.sh
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+      # the whole history and every branch: train_commits_not_on_main reads origin/main and origin/release/*. The token stays in the
+      # checkout, so the push of the script is the one of the App
+      - name: Default branch with the history, pushing as the App
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - uses: ./.github/actions/setup-workspace
+        with:
+          install: "false"
+      - name: Sync the release tooling of the open release lines
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LINE: ${{ inputs.line }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash scripts/release/sync-release-tools.sh ${LINE:+--line "$LINE"} --yes

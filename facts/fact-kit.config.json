@@ -1,0 +1,7 @@
+{
+  "aggregate": {
+    "polyrepo-sdk": "polyrepo-sdk-facts",
+    "polyrepo-sdk-py": "polyrepo-sdk-py-facts",
+    "polyrepo-shared": "polyrepo-shared-facts"
+  }
+}
