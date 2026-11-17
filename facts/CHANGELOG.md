@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0](https://github.com/blueprint-demo/polyrepo-pkg/compare/polyrepo-pkg-facts/v0.1.0-beta.1...polyrepo-pkg-facts/v0.1.0) (2026-11-17)
+
+
+### chore
+
+* **release/v0.1:** polyrepo-pkg-facts 0.1.0 ([a805fc4](https://github.com/blueprint-demo/polyrepo-pkg/commit/a805fc4530efd70cd6ee91893cb61439cf434513))
+
 ## 0.1.0-beta.1 (2026-11-17)
 
 
