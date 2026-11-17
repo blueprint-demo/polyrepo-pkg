@@ -36,21 +36,34 @@
   "packages": {
     "packages/polyrepo-sdk": {
       "component": "polyrepo-sdk",
-      "release-type": "node"
+      "release-type": "node",
+      "initial-version": "0.1.0-beta.1",
+      "versioning": "prerelease",
+      "prerelease-type": "beta.1",
+      "prerelease": true
     },
     "packages/polyrepo-sdk-py": {
       "component": "polyrepo-sdk-py",
-      "release-type": "python"
+      "release-type": "python",
+      "initial-version": "0.1.0-beta.1",
+      "versioning": "prerelease",
+      "prerelease-type": "beta.1",
+      "prerelease": true
     },
     "libs/polyrepo-shared": {
       "component": "polyrepo-shared",
-      "release-type": "node"
+      "release-type": "node",
+      "initial-version": "0.1.0",
+      "versioning": "default"
     },
     "facts": {
       "component": "polyrepo-pkg-facts",
       "release-type": "node",
       "changelog-path": "CHANGELOG.md",
-      "initial-version": "0.1.0"
+      "initial-version": "0.1.0-beta.1",
+      "versioning": "prerelease",
+      "prerelease-type": "beta.1",
+      "prerelease": true
     }
   }
 }
