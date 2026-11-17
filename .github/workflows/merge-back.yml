@@ -1,0 +1,82 @@
+name: merge-back
+
+# 開合回 PR：手動觸發，輸入發布線，在發布分支上跑 finalize-release.sh --phase merge-back。它是 release-please.yml 的
+# merge-back job 的後備：那個 job 只在 release-please 的 run 裡算出階段是 ga 且最終 tag 都齊了才啟動，沒有單元升版的線
+# 可能沒有這個事件，job 中途失敗時也要有人能補做。
+# 從 main 派送。發布分支 checkout 在工作區根目錄，main 的 checkout 放在子目錄 .main-tools，用 main 的腳本對根目錄執行，
+# 理由和做法見 advance-release.yml。
+# 推送與開 PR 用 GitHub App 的權杖，GITHUB_TOKEN 推的分支和開的 PR 不觸發檢查，合回 PR 的收尾就不會被帶出。
+# 條件還沒成立（階段不是 ga、或這條線要的最終 tag 還沒齊）時，腳本直接失敗並列出缺哪些 tag，不在 job 裡等。等 tag 齊了再觸發一次。
+# 誰可以觸發由倉層變數 RELEASE_TRIGGER_ACTORS 列出（逗號分隔的帳號），沒設時不限制。比對的是 github.triggering_actor。
+# 觸發者檢查排在取 App 權杖與 checkout 之後，沒有移到取權杖之前（評估過）：檢查用的腳本在 main 的 checkout（.main-tools）裡，
+# 而 actions/checkout 遇到沒有 .git 但已有內容的目錄會先清空它，所以發布分支要先 checkout 在根目錄，main 才能放進子目錄。
+# 名單外的人觸發時權杖已經取得，但還沒有任何寫入，檢查失敗 job 就結束。sync-release-tools.yml 與 close-release.yml 的 checkout 在根目錄、
+# 不受這限制，檢查在取權杖之前。
+
+on:
+  workflow_dispatch:
+    inputs:
+      line:
+        description: "the release line, X.Y"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# one group per release line, shared with advance-release.yml and merge-release-pr.yml, so they never write to the same line at once
+concurrency:
+  group: release-line-${{ inputs.line }}
+  cancel-in-progress: false
+
+env:
+  # a loop of a template script asks twice at most and the CI gate asks twice (decision self-hosted-job-no-wait)
+  POLL_TRIES: "2"
+  CI_GATE_TRIES: "2"
+  CI_GATE_QUEUE_TRIES: "0"
+
+jobs:
+  merge-back:
+    # the workflow of another branch would run with the key of the App
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.RELEASE_PLEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_PRIVATE_KEY }}
+      - name: Release branch at the root
+        uses: actions/checkout@v7
+        with:
+          ref: release/v${{ inputs.line }}
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Scripts of the default branch in a subdirectory
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .main-tools
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Keep the subdirectory out of the work tree
+        run: echo "/.main-tools/" >> .git/info/exclude
+      - name: Only the listed accounts may run this
+        env:
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          ALLOWED_ACTORS: ${{ vars.RELEASE_TRIGGER_ACTORS }}
+        run: bash .main-tools/scripts/release/check-trigger-actor.sh
+      - uses: ./.github/actions/setup-workspace
+      - name: Open the merge-back PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          LINE: ${{ inputs.line }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash .main-tools/scripts/release/finalize-release.sh --line "$LINE" --phase merge-back --yes
