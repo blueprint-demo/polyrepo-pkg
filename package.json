@@ -1,6 +1,6 @@
 {
   "name": "polyrepo-pkg",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "polyrepo-pkg, a demo repository composed by blueprint",
   "packageManager": "pnpm@12.3.4",
